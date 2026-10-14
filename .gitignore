@@ -1,2 +1,6 @@
 # ignore app cache folder
 .cache/
+__pycache__/
+
+# regenerate with laptop/make_tags.py
+laptop/tags.pdf

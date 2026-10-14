@@ -18,16 +18,13 @@ import cv2
 import numpy as np
 import yaml
 
+from geometry import make_detector
+
 HERE = Path(__file__).parent
 
 GREEN = (0, 255, 0)
 ORANGE = (0, 165, 255)
 RED = (0, 0, 255)
-
-
-def make_detector():
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-    return cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
 
 
 def tag_color(tag_id, cfg):
