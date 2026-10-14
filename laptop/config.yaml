@@ -1,0 +1,12 @@
+# Sumo vision config. Tag sizes are the edge of the black square, in cm.
+camera: 4              # /dev/video4 = DroidCam
+
+robot_tag_id: 20
+robot_tag_size_cm: 16.0
+
+floor_tags:            # id: size_cm
+  21: 16.0
+  22: 16.0
+  23: 16.0
+  24: 16.0
+anchor_tag_id: 21      # floor tag nearest the image center

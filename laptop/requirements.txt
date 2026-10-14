@@ -1,0 +1,4 @@
+opencv-python>=4.7
+numpy
+pyyaml
+pillow>=10.1
