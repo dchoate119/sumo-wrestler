@@ -1,9 +1,11 @@
 # Sumo vision config. Tag sizes are the edge of the black square, in cm.
 camera: 4              # /dev/video4 = DroidCam
+camera_size: [1280, 720]  # requested; track.py prints what the camera actually gives
 
 robot_tag_id: 20
 robot_tag_size_cm: 16.0
-our_radius_cm: 20.0    # OUR robot: opponent finder ignores this circle around our tag; err big
+robot_heading_offset_deg: 180  # robot's front relative to the tag's top edge (tag is mounted backward)
+our_radius_cm: 18.0   # OUR robot: opponent finder ignores this circle around our tag; err big
 
 opp_min_area_cm2: 150  # noise floor: smaller blobs never count as the opponent
 
