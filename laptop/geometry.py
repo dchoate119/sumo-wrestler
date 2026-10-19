@@ -37,6 +37,15 @@ def to_floor(H, pts):
     return cv2.perspectiveTransform(pts, H).reshape(-1, 2)
 
 
+def nearest_on_polygon(poly, pt):
+    """Closest point to pt on the edge of closed polygon poly (Nx2)."""
+    poly = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
+    a, ab = poly, np.roll(poly, -1, axis=0) - poly
+    t = np.clip(np.sum((pt - a) * ab, axis=1) / np.maximum(np.sum(ab * ab, axis=1), 1e-9), 0, 1)
+    proj = a + t[:, None] * ab
+    return proj[np.argmin(np.linalg.norm(proj - pt, axis=1))]
+
+
 def bearing(x, y, heading, tx, ty):
     """Direction to (tx, ty) relative to heading, degrees in [-180, 180). 0 = dead ahead."""
     a = math.degrees(math.atan2(ty - y, tx - x)) - heading

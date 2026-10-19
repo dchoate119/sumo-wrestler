@@ -3,24 +3,31 @@
 Needs calibration.json from calibrate.py. Every frame, the floor tags in view
 give a fresh image -> floor homography (the last good one is reused if none are
 seen), and the robot tag is mapped through it. The opponent is found by
-opponent.py.
+opponent.py. With --mqtt, every frame's state goes out as one JSON message.
 
-    x, y         robot tag center in floor cm (see geometry.py for the frame)
-    heading      direction of the tag's top edge, degrees from +x toward +y
-    edge         distance from the center to the ring's inner edge, cm (negative = past it)
-    out          all 4 robot tag corners are past the inner edge
-    opp_x, opp_y opponent blob center in floor cm
-    opp_edge     opponent's distance to the inner edge, cm
-    opp_dist     cm from us to the opponent         (only when we are seen too)
-    opp_bearing  direction to the opponent, degrees from our heading, + toward +y side
+    t              laptop time.time() when the frame was processed
+    seen           our robot tag was found; if false, the fields up to edge are missing
+    x, y           robot tag center in floor cm (see geometry.py for the frame)
+    heading        direction of the tag's top edge, degrees from +x toward +y
+    edge           distance from the center to the ring's inner edge, cm (negative = past it)
+    edge_bearing   direction to the nearest point of the inner edge   } degrees from our heading,
+    center_bearing direction to the ring's center                     } [-180, 180), 0 = ahead
+    out            all 4 robot tag corners past the inner edge for OUT_HOLD_S; stays true
+    opp_seen       an opponent blob was found; if false, the opp_ fields are missing
+    opp_x, opp_y   opponent blob center in floor cm
+    opp_edge       opponent's distance to the inner edge, cm
+    opp_dist       cm from us to the opponent                         } only when seen too
+    opp_bearing    direction to the opponent, degrees from our heading }
 
 The robot tag sits above the floor, so its position is skewed slightly away
 from the point under the camera. Fine for edge distances of a few cm.
 
     python laptop/track.py
     python laptop/track.py --camera 0
+    python laptop/track.py --mqtt                     # publish to the public test broker
+    python laptop/track.py --mqtt --broker localhost  # once a local broker runs
 
-Keys in the preview window: o = show opponent mask, q (or Esc) = quit.
+Keys in the preview window: o = show opponent mask, r = reset out, q (or Esc) = quit.
 """
 
 import argparse
@@ -33,10 +40,16 @@ import cv2
 import numpy as np
 import yaml
 
-from geometry import bearing, detect, make_detector, to_floor
+from geometry import bearing, detect, make_detector, nearest_on_polygon, to_floor
 from opponent import OpponentFinder
 
 HERE = Path(__file__).parent
+
+# Public broker for now; a local Mosquitto (--broker localhost) has steadier latency.
+# Topic is namespaced because anyone can publish on a public broker.
+DEFAULT_BROKER = "test.mosquitto.org"
+TOPIC = "dchoate119/sumo/state"
+OUT_HOLD_S = 0.5  # robot must be out this long before "out" goes true; then it latches
 
 GREEN = (0, 255, 0)
 ORANGE = (0, 165, 255)
@@ -64,18 +77,22 @@ def homography(tags, floor):
     return H
 
 
-def robot_pose(corners_cm, ring):
-    """Pose dict from the robot tag's corners in floor cm."""
+def robot_pose(corners_cm, ring, ring_center):
+    """Pose dict from the robot tag's corners in floor cm. "out" here is this frame only."""
     x, y = corners_cm.mean(axis=0)
     front = corners_cm[:2].mean(axis=0) - corners_cm[2:].mean(axis=0)  # bottom edge -> top edge
+    heading = math.degrees(math.atan2(front[1], front[0]))
     edge = cv2.pointPolygonTest(ring, (float(x), float(y)), True)  # + inside, - outside
+    ex, ey = nearest_on_polygon(ring, (x, y))
     out = all(cv2.pointPolygonTest(ring, (float(cx), float(cy)), False) < 0
               for cx, cy in corners_cm)
     return {
         "x": round(float(x), 1),
         "y": round(float(y), 1),
-        "heading": round(math.degrees(math.atan2(front[1], front[0])), 1),
+        "heading": round(heading, 1),
         "edge": round(float(edge), 1),
+        "edge_bearing": round(bearing(x, y, heading, ex, ey), 1),
+        "center_bearing": round(bearing(x, y, heading, *ring_center), 1),
         "out": out,
     }
 
@@ -97,7 +114,17 @@ def opponent_state(opp, pose, ring):
     return state
 
 
-def draw(frame, tags, H, ring, robot_id, pose, opp, fps):
+def connect_mqtt(host, port):
+    import paho.mqtt.client as mqtt  # only needed with --mqtt
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sumo-laptop")
+    client.connect(host, port)
+    client.loop_start()
+    print(f"MQTT: publishing to {host}:{port} topic '{TOPIC}'")
+    return client
+
+
+def draw(frame, tags, H, ring, robot_id, state, fps):
     if H is not None:
         ring_px = to_floor(np.linalg.inv(H), ring.reshape(-1, 2))
         cv2.polylines(frame, [ring_px.astype(int)], True, MAGENTA, 2)
@@ -109,24 +136,25 @@ def draw(frame, tags, H, ring, robot_id, pose, opp, fps):
         center = c.mean(axis=0)
         cv2.arrowedLine(frame, tuple(center.astype(int)), tuple(c[:2].mean(axis=0).astype(int)),
                         ORANGE, 3, tipLength=0.3)
-    if opp["opp_seen"]:
-        p = tuple(to_floor(np.linalg.inv(H), [[opp["opp_x"], opp["opp_y"]]])[0].astype(int))
+    s = state
+    if s["opp_seen"]:
+        p = tuple(to_floor(np.linalg.inv(H), [[s["opp_x"], s["opp_y"]]])[0].astype(int))
         cv2.drawMarker(frame, p, RED, cv2.MARKER_CROSS, 30, 3)
-        label = f"opp  edge {opp['opp_edge']:.0f}"
-        if "opp_dist" in opp:
-            label += f"  {opp['opp_dist']:.0f} cm @ {opp['opp_bearing']:.0f}"
+        label = f"opp  edge {s['opp_edge']:.0f}"
+        if "opp_dist" in s:
+            label += f"  {s['opp_dist']:.0f} cm @ {s['opp_bearing']:.0f}"
         cv2.putText(frame, label, (p[0] + 15, p[1] - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, RED, 2)
 
     if H is None:
-        text, color = "no floor tags seen yet", RED
-    elif pose is None:
-        text, color = "robot not seen", RED
+        text = "no floor tags seen yet"
+    elif not s["seen"]:
+        text = "robot not seen"
     else:
-        text = (f"x {pose['x']:.1f}  y {pose['y']:.1f}  hdg {pose['heading']:.0f}  "
-                f"edge {pose['edge']:.1f} cm")
-        color = RED if pose["out"] else WHITE
-        if pose["out"]:
-            text += "  OUT"
+        text = (f"x {s['x']:.1f}  y {s['y']:.1f}  hdg {s['heading']:.0f}  "
+                f"edge {s['edge']:.1f} cm @ {s['edge_bearing']:.0f}")
+    if s["out"]:
+        text += "  OUT (r = reset)"
+    color = WHITE if s["seen"] and not s["out"] else RED
     cv2.putText(frame, f"{fps:.1f} fps", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, WHITE, 2)
     cv2.putText(frame, text, (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
@@ -136,13 +164,19 @@ def main():
     ap.add_argument("--config", default=HERE / "config.yaml", type=Path)
     ap.add_argument("--calibration", default=HERE / "calibration.json", type=Path)
     ap.add_argument("--camera", type=int, help="webcam index (default: from config)")
+    ap.add_argument("--mqtt", action="store_true", help="publish the state over MQTT")
+    ap.add_argument("--broker", default=DEFAULT_BROKER, help="MQTT broker host")
+    ap.add_argument("--port", type=int, default=1883, help="MQTT broker port")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(args.config.read_text())
     if not args.calibration.exists():
         raise SystemExit(f"{args.calibration} not found, run calibrate.py first")
     floor, ring = load_calibration(args.calibration)
+    m = cv2.moments(ring)
+    ring_center = (m["m10"] / m["m00"], m["m01"] / m["m00"])
     finder = OpponentFinder(ring, floor, cfg["our_radius_cm"], cfg["opp_min_area_cm2"])
+    mqtt_client = connect_mqtt(args.broker, args.port) if args.mqtt else None
     robot_id = cfg["robot_tag_id"]
     camera = args.camera if args.camera is not None else cfg["camera"]
     detector = make_detector()
@@ -151,6 +185,8 @@ def main():
         raise SystemExit(f"Could not open camera {camera}")
 
     H = None
+    out = False
+    out_since = None  # when the robot was first seen past the edge in this stretch
     show_mask = False
     fps = 0.0
     last = time.perf_counter()
@@ -168,22 +204,30 @@ def main():
                 H = new_H
             pose = None
             if H is not None and robot_id in tags:
-                pose = robot_pose(to_floor(H, tags[robot_id]), ring)
+                pose = robot_pose(to_floor(H, tags[robot_id]), ring, ring_center)
             opp = {"opp_seen": False}
             if H is not None:
                 robot_xy = (pose["x"], pose["y"]) if pose else None
                 opp = opponent_state(finder.find(frame, H, robot_xy), pose, ring)
 
             now = time.perf_counter()
+            if pose is not None:  # not seen: keep the timer as is
+                out_since = (out_since or now) if pose["out"] else None
+            out = out or (out_since is not None and now - out_since >= OUT_HOLD_S)
+            state = {"t": round(time.time(), 3), "seen": pose is not None,
+                     **(pose or {}), "out": out, **opp}
+            if mqtt_client:
+                mqtt_client.publish(TOPIC, json.dumps(state), qos=0)
+
             inst_fps = 1.0 / max(now - last, 1e-6)
             fps = 0.9 * fps + 0.1 * inst_fps if fps else inst_fps  # smoothed
             last = now
             if now - last_print > 0.5:
                 last_print = now
                 seen = sorted(i for i in tags if i in floor)
-                print(f"{fps:5.1f} fps  floor tags {seen}  robot {pose or 'not seen'}  {opp}")
+                print(f"{fps:5.1f} fps  floor tags {seen}  {state}")
 
-            draw(frame, tags, H, ring, robot_id, pose, opp, fps)
+            draw(frame, tags, H, ring, robot_id, state, fps)
             cv2.imshow("sumo track", frame)
             if show_mask:
                 m = finder.mask
@@ -194,9 +238,17 @@ def main():
                 show_mask = not show_mask
                 if not show_mask:
                     cv2.destroyWindow("opponent mask")
+            elif key == ord("r"):
+                out, out_since = False, None
             elif key in (ord("q"), 27):
                 break
     finally:
+        if mqtt_client:
+            # nothing seen = the robot falls back to its own sensors
+            final = {"t": round(time.time(), 3), "seen": False, "out": out, "opp_seen": False}
+            mqtt_client.publish(TOPIC, json.dumps(final), qos=0)
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
         cap.release()
         cv2.destroyAllWindows()
 
