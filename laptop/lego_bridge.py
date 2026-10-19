@@ -22,20 +22,21 @@ import legoeducation as le
 
 TOPIC = "dchoate119/sumo/flip"
 
-FLIPPER = le.MOTOR_BOTH  # which side(s) drive the arm: MOTOR_LEFT, MOTOR_RIGHT or MOTOR_BOTH
-FLIP_DEG = 120           # how far up the arm swings, degrees from rest (sign sets direction)
+FLIPPER = le.MOTOR_BOTH  # both sides drive the arm; the right side runs mirrored in flip()
+FLIP_DEG = 90            # how far up the arm swings, degrees from rest (sign sets direction)
 FLIP_SPEED = 100         # % speed on the way up: fast for a hard flip
-RETURN_SPEED = 50        # % speed back down: gentler so the arm doesn't slam
-HOLD_UP_S = 0.15         # pause at the top before returning
+RETURN_SPEED = 75        # % speed back down
+HOLD_UP_S = 0            # pause at the top before returning
 
-card_color = le.LEGO_COLOR_PURPLE
-card_serial = '1227'
+# Connection Card on our Double Motor, so we never connect to another team's motor
+CARD_COLOR = le.LEGO_COLOR_PURPLE
+CARD_SERIAL = "1227"
 
 
 def connect_motor():
     motor = le.DoubleMotor()
     print("Searching for the Double Motor over Bluetooth...")
-    motor.connect(card_color=card_color, card_serial=card_serial)
+    motor.connect(card_color=CARD_COLOR, card_serial=CARD_SERIAL)
     if not motor.connected:
         raise SystemExit("Could not connect. Is the motor on and not paired to another app?")
     print(f"Connected (firmware {motor.version_firmware})")
@@ -44,11 +45,21 @@ def connect_motor():
     return motor
 
 
+def wait_done(motor):
+    while not motor.done():
+        time.sleep(0.01)
+
+
 def flip(motor):
     t0 = time.time()
-    motor.motor_run_to_relative_position(FLIP_DEG, motor=FLIPPER, speed=FLIP_SPEED)
+    # The two outputs face opposite ways, so the right side gets the negative angle
+    motor.motor_run_to_relative_position(FLIP_DEG, motor=le.MOTOR_LEFT, speed=FLIP_SPEED, blocking=False)
+    motor.motor_run_to_relative_position(-FLIP_DEG, motor=le.MOTOR_RIGHT, speed=FLIP_SPEED, blocking=False)
+    wait_done(motor)
     time.sleep(HOLD_UP_S)
-    motor.motor_run_to_relative_position(0, motor=FLIPPER, speed=RETURN_SPEED)
+    motor.motor_run_to_relative_position(0, motor=le.MOTOR_LEFT, speed=RETURN_SPEED, blocking=False)
+    motor.motor_run_to_relative_position(0, motor=le.MOTOR_RIGHT, speed=RETURN_SPEED, blocking=False)
+    wait_done(motor)
     print(f"flip done in {time.time() - t0:.2f} s")
 
 
