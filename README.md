@@ -96,8 +96,72 @@ Bearings are degrees in [-180, 180), 0 = straight ahead.
 
 When `track.py` quits, it sends one last message with `seen` and `opp_seen` false.
 
-## UNO Q (in progress)
+## System
 
-- Sensors: HC-SR04 ultrasonic on 5V, Trig D9, Echo D10 (working).
-- Next: subscribe to the MQTT state, then the behavior tree, motors, and the
-  sad song.
+```
+laptop: track.py ──state──►  UNO Q Python: behavior tree ──Bridge──► UNO Q sketch: drive motors,
+laptop: teleop ─────teleop───►      │                                   ultrasonic, accelerometer
+laptop: lego_bridge.py ◄──flip──────┘
+        └── BLE ──► LEGO Education double motor (flipper)
+```
+
+- **Laptop** publishes the match state and teleop commands. It never decides
+  anything. `lego_bridge.py` relays flip commands to the LEGO motor over BLE
+  (the `legoeducation` library needs Python 3.14 + Bluetooth, which the board's
+  container lacks).
+- **UNO Q Python** merges MQTT state with board sensors and ticks the behavior
+  tree. The tree outputs `drive(l, r)` and an optional flip.
+- **UNO Q sketch** drives the two motors (from door-to-door), reads the
+  HC-SR04 (5V, Trig D9, Echo D10) and the accelerometer (from ping-pong), and
+  stops the motors if no `drive` call arrives for 200 ms.
+
+### Behavior tree
+
+![tree](docs/tree_layout.png)
+
+A selector: each tick, the first behavior whose conditions all pass runs.
+Safety (Lost, Idle, Teleop, Edge escape) outranks offense. State older than
+0.3 s (by arrival time) is stale.
+
+- **Idle** = `mode` is `idle` (set by keys in `track.py`).
+- **Teleop active** = a `teleop` message arrived in the last 0.5 s. Teleop
+  overrides auto whenever the operator is touching the controls; letting go
+  hands control back to auto.
+
+### MQTT topics
+
+All under `dchoate119/sumo/` on a local broker on the laptop.
+
+| topic | from → to | content |
+|---|---|---|
+| `state` | laptop → UNO Q | see above, ~30 Hz, plus `mode`: `idle` / `auto` |
+| `teleop` | laptop → UNO Q | `{"l", "r", "flip"}`, ~20 Hz, only while controls are touched |
+| `flip` | UNO Q → laptop | one message per flip, never repeated |
+
+The teleop **hold** button publishes `{"l": 0, "r": 0}` while pressed, so the
+robot stands still under teleop instead of returning to auto.
+
+## To do
+
+**Laptop**
+- [ ] Run mosquitto locally; point `track.py` and the UNO Q at it
+- [ ] `lego_bridge.py`: connect to the double motor, run flips off the MQTT
+      thread, ignore flips while one is running
+- [ ] `track.py`: keys to set `mode` (`idle` / `auto`), sent in every state message
+- [ ] Teleop publisher (keyboard or gamepad): publish only while controls are
+      touched, plus a hold button that publishes zeros
+
+**UNO Q sketch**
+- [ ] `drive(l, r)` for both motors, with the 200 ms watchdog
+- [ ] Accelerometer read exposed over the Bridge
+- [ ] Sad song
+
+**UNO Q Python**
+- [ ] MQTT subscriber that fills the blackboard and stamps arrival time
+- [ ] Behavior tree (8 behaviors above), outputting `drive` + `flip`
+- [ ] Teleop pass-through with edge guard; active while teleop is < 0.5 s old
+- [ ] `try/finally` around `App.run()` that sends `drive(0, 0)`
+
+**Tuning**
+- [ ] Measure flip time, set `FLIP_COOLDOWN_S`
+- [ ] Tune thresholds (`EDGE_CM`, `FLIP_CM`, `ATTACK_CM`, `ATTACK_DEG`) on the ring
