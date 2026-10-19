@@ -42,7 +42,18 @@ def connect_motor():
     print(f"Connected (firmware {motor.version_firmware})")
     motor.motor_set_end_state(le.MOTOR_END_STATE_HOLD, motor=FLIPPER)  # arm stays put when stopped
     motor.motor_reset_relative_position(motor=FLIPPER)                 # rest position = 0
+    hold_at_rest(motor)
     return motor
+
+
+def hold_at_rest(motor):
+    """Drive both sides to 0 so the HOLD end state kicks in and the motors
+    actively resist being pushed. HOLD only applies once a move finishes, so
+    without this the arm would swing freely until the first flip."""
+    motor.motor_run_to_relative_position(0, motor=le.MOTOR_LEFT, speed=RETURN_SPEED, blocking=False)
+    motor.motor_run_to_relative_position(0, motor=le.MOTOR_RIGHT, speed=RETURN_SPEED, blocking=False)
+    wait_done(motor)
+    print("Flipper locked at rest")
 
 
 def wait_done(motor):
