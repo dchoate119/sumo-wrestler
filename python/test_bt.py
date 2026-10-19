@@ -22,6 +22,8 @@ CASES = [
     ("edge, facing away", [{**AUTO, "edge": NEAR, "edge_bearing": 170, "center_bearing": 10}], ["Search"]),
     ("past the edge", [{**AUTO, "edge": -3, "edge_bearing": -20, "center_bearing": 160}], ["Edge escape"]),
     ("edge but stale", [{**AUTO, "fresh": False, "edge": NEAR, "edge_bearing": 0, "center_bearing": 180}], ["Idle"]),
+    ("out", [{**AUTO, "out": True, "edge": -20, "edge_bearing": 0, "center_bearing": 180}], ["Lost"]),
+    ("out beats idle", [{"fresh": True, "mode": "idle", "out": True}], ["Lost"]),
     ("escape holds until clear", [
         {**AUTO, "edge": NEAR, "edge_bearing": 10, "center_bearing": -170},   # starts
         {**AUTO, "edge": NEAR, "edge_bearing": 170, "center_bearing": 10},    # turned away: holds

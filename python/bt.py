@@ -103,6 +103,9 @@ def turn_and_drive(bearing, speed):
 def build_tree():
     # Conditions test seen before the pose fields, which are missing when it's false
     return Selector(
+        # out latches in track.py until r is pressed there; the laptop plays the sad song
+        Sequence(Condition("out", lambda bb: bb.get("out")),
+                 Action("Lost", lambda bb: ("drive", 0, 0))),
         # stale counts as idle, so the robot stops if the laptop goes quiet
         Sequence(Condition("not auto", lambda bb: bb.get("mode") != "auto" or not bb["fresh"]),
                  Action("Idle", lambda bb: ("drive", 0, 0))),

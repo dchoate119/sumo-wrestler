@@ -46,6 +46,7 @@ import yaml
 
 from geometry import bearing, detect, make_detector, nearest_on_polygon, to_floor
 from opponent import OpponentFinder
+import sad_song
 
 HERE = Path(__file__).parent
 
@@ -231,6 +232,7 @@ def main():
     last = time.perf_counter()
     last_print = 0.0
     frames = seen_frames = 0  # since the last print, for the robot seen rate
+    last_behavior = None
     try:
         while True:
             ok, frame = cap.read()
@@ -277,7 +279,12 @@ def main():
                       f"floor tags {seen}  {board['behavior'] or ''}  {state}")
                 frames = seen_frames = 0
 
-            draw(frame, tags, H, ring, robot_id, state, fps, board["behavior"])
+            behavior = board["behavior"]
+            if behavior == "Lost" and last_behavior != "Lost":
+                sad_song.play()  # the board decided we lost; the laptop is its speaker
+            last_behavior = behavior
+
+            draw(frame, tags, H, ring, robot_id, state, fps, behavior)
             cv2.imshow("sumo track", frame)
             if show_mask:
                 m = finder.mask
