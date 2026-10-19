@@ -6,7 +6,8 @@ seen), and the robot tag is mapped through it. The opponent is found by
 opponent.py. With --mqtt, every frame's state goes out as one JSON message.
 
     t              laptop time.time() when the frame was processed
-    seen           our robot tag was found; if false, the fields up to edge are missing
+    mode           "idle" (robot holds still) or "auto" (behavior tree runs); space toggles
+    seen          our robot tag was found; if false, the fields up to edge are missing
     x, y           robot tag center in floor cm (see geometry.py for the frame)
     heading        direction of the tag's top edge, degrees from +x toward +y
     edge           distance from the center to the ring's inner edge, cm (negative = past it)
@@ -27,7 +28,8 @@ from the point under the camera. Fine for edge distances of a few cm.
     python laptop/track.py --mqtt                     # publish to the public test broker
     python laptop/track.py --mqtt --broker localhost  # once a local broker runs
 
-Keys in the preview window: o = show opponent mask, r = reset out, q (or Esc) = quit.
+Keys in the preview window: space = start/stop (auto/idle), o = show opponent mask,
+r = reset out, q (or Esc) = quit. Starts in idle.
 """
 
 import argparse
@@ -56,6 +58,7 @@ ORANGE = (0, 165, 255)
 MAGENTA = (255, 0, 255)
 RED = (0, 0, 255)
 WHITE = (255, 255, 255)
+GRAY = (150, 150, 150)
 
 
 def load_calibration(path):
@@ -156,6 +159,15 @@ def draw(frame, tags, H, ring, robot_id, state, fps):
         text += "  OUT (r = reset)"
     color = WHITE if s["seen"] and not s["out"] else RED
     cv2.putText(frame, f"{fps:.1f} fps", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, WHITE, 2)
+
+    # Mode at a glance: colored border plus a big label in the top-right corner
+    auto = s["mode"] == "auto"
+    mode_color = GREEN if auto else GRAY
+    h, w = frame.shape[:2]
+    cv2.rectangle(frame, (0, 0), (w - 1, h - 1), mode_color, 12)
+    label = "AUTO" if auto else "IDLE"
+    (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 4)
+    cv2.putText(frame, label, (w - tw - 25, 55), cv2.FONT_HERSHEY_SIMPLEX, 1.5, mode_color, 4)
     cv2.putText(frame, text, (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
 
@@ -185,6 +197,7 @@ def main():
         raise SystemExit(f"Could not open camera {camera}")
 
     H = None
+    mode = "idle"  # never start moving on launch
     out = False
     out_since = None  # when the robot was first seen past the edge in this stretch
     show_mask = False
@@ -214,7 +227,7 @@ def main():
             if pose is not None:  # not seen: keep the timer as is
                 out_since = (out_since or now) if pose["out"] else None
             out = out or (out_since is not None and now - out_since >= OUT_HOLD_S)
-            state = {"t": round(time.time(), 3), "seen": pose is not None,
+            state = {"t": round(time.time(), 3), "mode": mode, "seen": pose is not None,
                      **(pose or {}), "out": out, **opp}
             if mqtt_client:
                 mqtt_client.publish(TOPIC, json.dumps(state), qos=0)
@@ -234,7 +247,10 @@ def main():
                 cv2.imshow("opponent mask", cv2.resize(m, (m.shape[1] * 3, m.shape[0] * 3),
                                                        interpolation=cv2.INTER_NEAREST))
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("o"):
+            if key == ord(" "):
+                mode = "idle" if mode == "auto" else "auto"
+                print(f"mode: {mode}")
+            elif key == ord("o"):
                 show_mask = not show_mask
                 if not show_mask:
                     cv2.destroyWindow("opponent mask")
@@ -244,8 +260,9 @@ def main():
                 break
     finally:
         if mqtt_client:
-            # nothing seen = the robot falls back to its own sensors
-            final = {"t": round(time.time(), 3), "seen": False, "out": out, "opp_seen": False}
+            # idle = the robot stops; nothing seen = no stale pose left behind
+            final = {"t": round(time.time(), 3), "mode": "idle", "seen": False, "out": out,
+                     "opp_seen": False}
             mqtt_client.publish(TOPIC, json.dumps(final), qos=0)
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
