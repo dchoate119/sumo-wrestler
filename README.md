@@ -16,8 +16,8 @@ laptop/            vision system (runs on the laptop)
   track.py         live tracker; publishes the state over MQTT
   opponent.py      opponent finder used by track.py
   geometry.py      shared detection and floor-geometry helpers
-python/main.py     UNO Q Linux side (currently: ultrasonic test)
-sketch/            UNO Q microcontroller (currently: HC-SR04 on D9/D10)
+python/main.py     UNO Q Linux side (currently: motor + sensor test)
+sketch/            UNO Q microcontroller: drive(), distance(), imu_read()
 docs/              screenshots
 ```
 
