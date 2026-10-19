@@ -10,13 +10,17 @@ the board (see test_bt.py).
 SUCCESS, FAILURE, RUNNING = "success", "failure", "running"
 
 SEARCH_SPEED = 80     # of 255, each wheel opposite: spin in place
-EDGE_CM = 30          # escape when the tag center is closer than this to the edge
+EDGE_CM = 20          # escape when the tag center is closer than this to the edge
 FACING_EDGE_DEG = 90  # ... and the edge is within this of our heading
 EDGE_CLEAR_CM = EDGE_CM + 20  # once escaping, keep going until this far in
 ESCAPE_SPEED = 120    # forward speed once pointed at the center
 TURN_SPEED = 90       # pivot speed while pointing at the center
 ALIGN_DEG = 30        # pivot in place until the target is within this
 STEER_PER_DEG = 2     # while driving, wheel speed difference per degree off
+CHASE_SPEED = 100     # forward speed toward the opponent once pointed at it
+ATTACK_SPEED = 150    # full push
+ATTACK_DEG = 15       # attack when the opponent is within this of our heading
+ATTACK_CM = 40        # ... and its center is closer than this to ours (touching is ~15-20)
 # Bearings grow from +x toward +y, which looks clockwise from the camera, so a
 # positive bearing means turn right. Flip this if the robot turns away instead.
 TURN_SIGN = -1
@@ -111,5 +115,11 @@ def build_tree():
                  Action("Idle", lambda bb: ("drive", 0, 0))),
         Sequence(EdgeNear(),
                  Action("Edge escape", lambda bb: turn_and_drive(bb["center_bearing"], ESCAPE_SPEED))),
+        Sequence(Condition("opp in sight", lambda bb: bb.get("seen") and bb.get("opp_seen")),
+                 Selector(
+                     Sequence(Condition("lined up", lambda bb: abs(bb["opp_bearing"]) < ATTACK_DEG),
+                              Condition("close", lambda bb: bb["opp_dist"] < ATTACK_CM),
+                              Action("Attack", lambda bb: turn_and_drive(bb["opp_bearing"], ATTACK_SPEED))),
+                     Action("Chase", lambda bb: turn_and_drive(bb["opp_bearing"], CHASE_SPEED)))),
         Action("Search", lambda bb: ("drive", SEARCH_SPEED, -SEARCH_SPEED)),
     )

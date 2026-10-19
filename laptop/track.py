@@ -17,6 +17,7 @@ opponent.py. With --mqtt, every frame's state goes out as one JSON message.
     center_bearing direction to the ring's center                     } [-180, 180), 0 = ahead
     out            all 4 robot tag corners past the inner edge for OUT_HOLD_S; stays true
     opp_seen       an opponent blob was found; if false, the opp_ fields are missing
+    opp_held       opp_seen, but the blob was lost < OPP_HOLD_S ago: its last position
     opp_x, opp_y   opponent blob center in floor cm
     opp_edge       opponent's distance to the inner edge, cm
     opp_dist       cm from us to the opponent                         } only when seen too
@@ -57,6 +58,7 @@ TOPIC = "dchoate119/sumo/state"
 BEHAVIOR_TOPIC = "dchoate119/sumo/behavior"  # the board's running behavior, shown on screen
 OUT_HOLD_S = 0.5  # robot must be out this long before "out" goes true; then it latches
 POSE_HOLD_S = 0.5  # tag lost: keep reporting the last pose this long (held = true)
+OPP_HOLD_S = 0.5   # opponent lost: keep its last position this long (opp_held = true)
 
 GREEN = (0, 255, 0)
 ORANGE = (0, 165, 255)
@@ -227,6 +229,7 @@ def main():
     out = False
     out_since = None  # when the robot was first seen past the edge in this stretch
     last_pose, last_pose_t = None, 0.0  # last real detection, for POSE_HOLD_S
+    last_opp, last_opp_t = None, 0.0    # last opponent position found, for OPP_HOLD_S
     show_mask = False
     fps = 0.0
     last = time.perf_counter()
@@ -257,7 +260,14 @@ def main():
             opp = {"opp_seen": False}
             if H is not None:
                 robot_xy = (pose["x"], pose["y"]) if pose else None
-                opp = opponent_state(finder.find(frame, H, robot_xy), pose, ring)
+                opp_xy = finder.find(frame, H, robot_xy)
+                if opp_xy is not None:
+                    last_opp, last_opp_t = opp_xy, now
+                # same idea for the opponent: up close it can vanish into our mask for a frame or two
+                opp_held = opp_xy is None and last_opp is not None and now - last_opp_t < OPP_HOLD_S
+                if opp_held:
+                    opp_xy = last_opp
+                opp = {**opponent_state(opp_xy, pose, ring), "opp_held": opp_held}
 
             if pose is not None and not held:  # not seen: keep the timer as is
                 out_since = (out_since or now) if pose["out"] else None

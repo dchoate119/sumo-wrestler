@@ -9,6 +9,7 @@ AUTO = {"fresh": True, "mode": "auto", "seen": True}
 NEAR = EDGE_CM - 5               # close enough to start an escape
 HELD = (EDGE_CM + EDGE_CLEAR_CM) / 2  # past the start line, not yet clear
 CLEAR = EDGE_CLEAR_CM + 5
+MID = {"edge": CLEAR, "edge_bearing": 0, "center_bearing": 180}  # well inside the ring
 
 # (description, blackboards ticked in order on one tree, expected behavior after each)
 CASES = [
@@ -24,6 +25,13 @@ CASES = [
     ("edge but stale", [{**AUTO, "fresh": False, "edge": NEAR, "edge_bearing": 0, "center_bearing": 180}], ["Idle"]),
     ("out", [{**AUTO, "out": True, "edge": -20, "edge_bearing": 0, "center_bearing": 180}], ["Lost"]),
     ("out beats idle", [{"fresh": True, "mode": "idle", "out": True}], ["Lost"]),
+    ("opp far, off to the side", [{**AUTO, **MID, "opp_seen": True, "opp_dist": 100, "opp_bearing": 90}], ["Chase"]),
+    ("opp far, ahead", [{**AUTO, **MID, "opp_seen": True, "opp_dist": 100, "opp_bearing": 5}], ["Chase"]),
+    ("opp close, off to the side", [{**AUTO, **MID, "opp_seen": True, "opp_dist": 25, "opp_bearing": 60}], ["Chase"]),
+    ("opp close, ahead", [{**AUTO, **MID, "opp_seen": True, "opp_dist": 25, "opp_bearing": 5}], ["Attack"]),
+    ("opp seen, we aren't", [{**AUTO, "seen": False, "opp_seen": True}], ["Search"]),
+    ("edge beats attack", [{**AUTO, "edge": NEAR, "edge_bearing": 0, "center_bearing": 180,
+                            "opp_seen": True, "opp_dist": 25, "opp_bearing": 0}], ["Edge escape"]),
     ("escape holds until clear", [
         {**AUTO, "edge": NEAR, "edge_bearing": 10, "center_bearing": -170},   # starts
         {**AUTO, "edge": NEAR, "edge_bearing": 170, "center_bearing": 10},    # turned away: holds
@@ -42,5 +50,5 @@ for desc, bbs, expected in CASES:
         got.append(bb.get("behavior"))
     ok = got == expected
     failed += not ok
-    print(f"{'ok  ' if ok else 'FAIL'} {desc:<24} -> {' > '.join(got)} {bb.get('cmd')}")
+    print(f"{'ok  ' if ok else 'FAIL'} {desc:<28} -> {' > '.join(got)} {bb.get('cmd')}")
 print(f"{len(CASES) - failed}/{len(CASES)} passed")

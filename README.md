@@ -81,6 +81,7 @@ red cross = opponent.
 | `center_bearing` | direction to the ring center, relative to our heading |
 | `out` | fully past the edge for 0.5 s; stays true until reset |
 | `opp_seen` | opponent found; if false, the `opp_` fields are left out |
+| `opp_held` | opponent lost for under 0.5 s; its position is the last one found |
 | `opp_x`, `opp_y`, `opp_edge` | opponent position and its distance to the edge |
 | `opp_dist`, `opp_bearing` | cm and direction from us to the opponent (only when `seen`) |
 
