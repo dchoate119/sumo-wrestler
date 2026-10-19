@@ -2,7 +2,8 @@
 
 Subscribes to the state topic from laptop/track.py, ticks the tree in bt.py at
 TICK_HZ, and sends the resulting drive command to the sketch. Space in track.py
-switches between idle and auto. The broker address and login come from the
+switches between idle and auto. The running behavior goes back out on
+BEHAVIOR_TOPIC so track.py can show it. The broker address and login come from the
 gitignored python/mqtt_secrets.py (BROKER, USER, PASSWORD).
 """
 
@@ -18,6 +19,7 @@ from mqtt_secrets import BROKER, PASSWORD, USER
 
 PORT = 1883
 TOPIC = "dchoate119/sumo/state"
+BEHAVIOR_TOPIC = "dchoate119/sumo/behavior"  # running behavior, sent on change for track.py
 TICK_HZ = 20        # also feeds the sketch's 200 ms motor watchdog
 STALE_S = 0.3       # state older than this (by arrival time) is not fresh
 
@@ -57,10 +59,11 @@ client.loop_start()
 
 tree = build_tree()
 last_behavior = None
+last_behavior_pub = 0.0
 
 
 def loop():
-    global last_behavior
+    global last_behavior, last_behavior_pub
     with lock:
         bb = dict(latest)
         bb["fresh"] = time.monotonic() - latest_rx < STALE_S
@@ -69,9 +72,13 @@ def loop():
     kind, *args = bb["cmd"]
     if kind == "drive":
         Bridge.call("drive", *(int(a) for a in args))
+    now = time.monotonic()
     if bb["behavior"] != last_behavior:
         logger.info(f"behavior: {bb['behavior']}")
-        last_behavior = bb["behavior"]
+    # on change, and every second in case an earlier one went out before MQTT connected
+    if bb["behavior"] != last_behavior or now - last_behavior_pub > 1.0:
+        client.publish(BEHAVIOR_TOPIC, bb["behavior"], qos=0, retain=True)
+        last_behavior, last_behavior_pub = bb["behavior"], now
     time.sleep(1 / TICK_HZ)
 
 
@@ -79,4 +86,5 @@ try:
     App.run(user_loop=loop)
 finally:
     Bridge.call("drive", 0, 0)
+    client.publish(BEHAVIOR_TOPIC, "App stopped", qos=0, retain=True).wait_for_publish(1)
     client.loop_stop()

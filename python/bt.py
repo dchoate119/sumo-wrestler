@@ -9,7 +9,17 @@ the board (see test_bt.py).
 
 SUCCESS, FAILURE, RUNNING = "success", "failure", "running"
 
-SEARCH_SPEED = 80  # of 255, each wheel opposite: spin in place
+SEARCH_SPEED = 80     # of 255, each wheel opposite: spin in place
+EDGE_CM = 30          # escape when the tag center is closer than this to the edge
+FACING_EDGE_DEG = 90  # ... and the edge is within this of our heading
+EDGE_CLEAR_CM = EDGE_CM + 20  # once escaping, keep going until this far in
+ESCAPE_SPEED = 120    # forward speed once pointed at the center
+TURN_SPEED = 90       # pivot speed while pointing at the center
+ALIGN_DEG = 30        # pivot in place until the target is within this
+STEER_PER_DEG = 2     # while driving, wheel speed difference per degree off
+# Bearings grow from +x toward +y, which looks clockwise from the camera, so a
+# positive bearing means turn right. Flip this if the robot turns away instead.
+TURN_SIGN = -1
 
 
 class Selector:
@@ -60,10 +70,43 @@ class Action:
         return RUNNING
 
 
+class EdgeNear:
+    """Starts an escape when near the edge and facing it, then holds until edge > EDGE_CLEAR_CM.
+
+    Holding without the facing check keeps Search from spinning the robot back
+    toward the edge halfway through the turn. A dropout (not seen) fails this
+    tick but keeps the latch, so the escape resumes when the tag comes back.
+    """
+
+    def __init__(self):
+        self.active = False
+
+    def tick(self, bb):
+        if not bb.get("seen"):
+            return FAILURE
+        if self.active:
+            self.active = bb["edge"] < EDGE_CLEAR_CM
+        else:
+            self.active = bb["edge"] < EDGE_CM and abs(bb["edge_bearing"]) < FACING_EDGE_DEG
+        return SUCCESS if self.active else FAILURE
+
+
+def turn_and_drive(bearing, speed):
+    """Pivot toward bearing (degrees, + = right) until roughly aligned, then drive and steer."""
+    if abs(bearing) > ALIGN_DEG:
+        turn = TURN_SIGN * (TURN_SPEED if bearing > 0 else -TURN_SPEED)
+        return ("drive", turn, -turn)
+    steer = TURN_SIGN * STEER_PER_DEG * bearing
+    return ("drive", speed + steer, speed - steer)
+
+
 def build_tree():
+    # Conditions test seen before the pose fields, which are missing when it's false
     return Selector(
         # stale counts as idle, so the robot stops if the laptop goes quiet
         Sequence(Condition("not auto", lambda bb: bb.get("mode") != "auto" or not bb["fresh"]),
                  Action("Idle", lambda bb: ("drive", 0, 0))),
+        Sequence(EdgeNear(),
+                 Action("Edge escape", lambda bb: turn_and_drive(bb["center_bearing"], ESCAPE_SPEED))),
         Action("Search", lambda bb: ("drive", SEARCH_SPEED, -SEARCH_SPEED)),
     )

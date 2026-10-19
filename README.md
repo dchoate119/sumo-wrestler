@@ -62,7 +62,7 @@ red cross = opponent.
 `dchoate119/sumo/state` on `test.mosquitto.org`:
 
 ```json
-{"t": 1729361234.52, "mode": "auto", "seen": true,
+{"t": 1729361234.52, "mode": "auto", "seen": true, "held": false,
  "x": 150.0, "y": 56.0, "heading": -90.0,
  "edge": 33.5, "edge_bearing": 0.0, "center_bearing": -180.0, "out": false,
  "opp_seen": true, "opp_x": 200.0, "opp_y": 100.0,
@@ -74,6 +74,7 @@ red cross = opponent.
 | `t` | laptop time (s), to spot stale data |
 | `mode` | `idle` (robot holds still) or `auto` (behavior tree runs) |
 | `seen` | our tag was found; if false, the pose fields are left out |
+| `held` | tag lost for under 0.5 s; the pose is the last one seen |
 | `x`, `y`, `heading` | our position (cm) and heading (deg, from +x toward +y) |
 | `edge` | cm to the ring's inner edge, negative once past it |
 | `edge_bearing` | direction to the nearest edge point, relative to our heading |
