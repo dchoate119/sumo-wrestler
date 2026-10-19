@@ -47,16 +47,6 @@ python laptop/make_tags.py      # print tags.pdf at 100% scale
 python laptop/view_tags.py      # check the camera sees every tag
 ```
 
-### During Match
-
-1. Put the floor tags down, keeping them off the tape.
-2. `python laptop/calibrate.py`. Press `c` to capture and check that the
-   magenta line traces the tape's inner edge (click the tape to resample its
-   color if not), then press `s` to save. The ring may have robots in it.
-3. `python laptop/track.py --mqtt` (add `--broker localhost` for a local
-   broker). Keys: `o` shows the opponent mask, `r` resets `out` between rounds,
-   `q` quits.
-
 ### Tracker view (synthetic test)
 
 | Approaching the edge | Pushed out |
@@ -72,7 +62,7 @@ red cross = opponent.
 `dchoate119/sumo/state` on `test.mosquitto.org`:
 
 ```json
-{"t": 1729361234.52, "seen": true,
+{"t": 1729361234.52, "mode": "auto", "seen": true,
  "x": 150.0, "y": 56.0, "heading": -90.0,
  "edge": 33.5, "edge_bearing": 0.0, "center_bearing": -180.0, "out": false,
  "opp_seen": true, "opp_x": 200.0, "opp_y": 100.0,
@@ -82,6 +72,7 @@ red cross = opponent.
 | field | meaning |
 |---|---|
 | `t` | laptop time (s), to spot stale data |
+| `mode` | `idle` (robot holds still) or `auto` (behavior tree runs) |
 | `seen` | our tag was found; if false, the pose fields are left out |
 | `x`, `y`, `heading` | our position (cm) and heading (deg, from +x toward +y) |
 | `edge` | cm to the ring's inner edge, negative once past it |
@@ -134,7 +125,7 @@ All under `dchoate119/sumo/` on a local broker on the laptop.
 
 | topic | from → to | content |
 |---|---|---|
-| `state` | laptop → UNO Q | see above, ~30 Hz, plus `mode`: `idle` / `auto` |
+| `state` | laptop → UNO Q | see above, ~30 Hz |
 | `teleop` | laptop → UNO Q | `{"l", "r", "flip"}`, ~20 Hz, only while controls are touched |
 | `flip` | UNO Q → laptop | one message per flip, never repeated |
 
@@ -147,7 +138,7 @@ robot stands still under teleop instead of returning to auto.
 - [ ] Run mosquitto locally; point `track.py` and the UNO Q at it
 - [ ] `lego_bridge.py`: connect to the double motor, run flips off the MQTT
       thread, ignore flips while one is running
-- [ ] `track.py`: keys to set `mode` (`idle` / `auto`), sent in every state message
+- [x] `track.py`: keys to set `mode` (`idle` / `auto`), sent in every state message
 - [ ] Teleop publisher (keyboard or gamepad): publish only while controls are
       touched, plus a hold button that publishes zeros
 
@@ -165,3 +156,11 @@ robot stands still under teleop instead of returning to auto.
 **Tuning**
 - [ ] Measure flip time, set `FLIP_COOLDOWN_S`
 - [ ] Tune thresholds (`EDGE_CM`, `FLIP_CM`, `ATTACK_CM`, `ATTACK_DEG`) on the ring
+
+## During match
+
+1. Put the floor tags down (off the tape), then `python laptop/calibrate.py`:
+   `c` to capture, `s` to save.
+2. Terminal 1: `mosquitto -c laptop/mosquitto.conf -v`
+3. Terminal 2: `python laptop/track.py --mqtt --broker localhost`. Keys: space
+   start/stop, `r` reset `out`, `o` opponent mask, `q` quit.
