@@ -1,14 +1,20 @@
-"""Survey the floor tags and save their floor positions to calibration.json.
+"""Survey the floor tags and the ring, and save both to calibration.json.
 
 Run with the floor tags down and the ring empty. The anchor tag plus its known
 size gives an image -> floor homography; every other floor tag is mapped through
 it. Each tag should then come out as a square of its known size. A check table
 shows how close they get.
 
+The ring is found in the top-down view: blue pixels (ring_hsv in config.yaml)
+are cleaned up into the tape loop, and the hole inside it is the ring's inner
+edge, saved as a polygon in floor cm. Keep tags off the tape so the loop closes.
+
     python laptop/calibrate.py
     python laptop/calibrate.py --camera 0 --secs 3
 
-Preview keys: c = capture, q = quit. Result keys: s = save, r = redo, q = quit.
+Preview keys: c = capture, q = quit.
+Result keys: click the tape = resample its color, m = show mask,
+s = save, r = redo, q = quit.
 """
 
 import argparse
@@ -26,8 +32,15 @@ HERE = Path(__file__).parent
 
 EDGE_TOL_CM = 0.5   # flag a tag if any edge is off its known size by more than this
 ANGLE_TOL_DEG = 3   # ... or any corner is off 90 degrees by more than this
-TOP_DOWN_PX = 800   # longest side of the top-down view
-MARGIN_CM = 20      # padding around the tags in the top-down view
+TOP_DOWN_PX = 900   # longest side of the top-down view
+MAX_VIEW_CM = 500   # clip the top-down view to this far from the anchor
+
+CLOSE_CM = 5        # bridge tape gaps up to about this wide
+OPEN_CM = 1         # drop blue specks smaller than this
+SIMPLIFY_CM = 1     # ring polygon may stray this far from the traced edge
+MIN_RING_CM2 = 2500 # ignore holes smaller than this (50 x 50 cm)
+SAMPLE_PX = 3       # click samples a (2 * SAMPLE_PX + 1) square patch
+HUE_TOL = 10        # sampled hue +- this (OpenCV hue runs 0-179)
 
 
 def capture(cap, detector, secs):
@@ -80,26 +93,96 @@ def check(floor, cfg):
     return all_ok
 
 
-def top_down(frame, H, floor):
-    """Warp the frame to a bird's-eye view covering all floor tags, with tags drawn."""
-    pts = np.vstack(list(floor.values()))
-    x0, y0 = pts.min(axis=0) - MARGIN_CM
-    x1, y1 = pts.max(axis=0) + MARGIN_CM
-    scale = TOP_DOWN_PX / max(x1 - x0, y1 - y0)  # px per cm
-    S = np.array([[scale, 0, -x0 * scale], [0, scale, -y0 * scale], [0, 0, 1]])
-    size = (int((x1 - x0) * scale), int((y1 - y0) * scale))
-    view = cv2.warpPerspective(frame, S @ H, size)
+def top_down(frame, H):
+    """Warp the whole frame to a bird's-eye view. Returns (view, origin_cm, px_per_cm)."""
+    h, w = frame.shape[:2]
+    c = to_floor(H, [[0, 0], [w, 0], [w, h], [0, h]])
+    lo = np.clip(c.min(axis=0), -MAX_VIEW_CM, MAX_VIEW_CM)
+    hi = np.clip(c.max(axis=0), -MAX_VIEW_CM, MAX_VIEW_CM)
+    scale = TOP_DOWN_PX / (hi - lo).max()
+    S = np.array([[scale, 0, -lo[0] * scale], [0, scale, -lo[1] * scale], [0, 0, 1]])
+    size = tuple(((hi - lo) * scale).astype(int))
+    return cv2.warpPerspective(frame, S @ H, size), lo, scale
+
+
+def sample_hsv(view, pt):
+    """HSV range around the median color of a small patch at pt."""
+    x, y = pt
+    patch = view[max(y - SAMPLE_PX, 0):y + SAMPLE_PX + 1, max(x - SAMPLE_PX, 0):x + SAMPLE_PX + 1]
+    h, s, v = np.median(cv2.cvtColor(patch, cv2.COLOR_BGR2HSV).reshape(-1, 3), axis=0)
+    lo = [max(h - HUE_TOL, 0), max(s - 80, 40), max(v - 100, 30)]
+    hi = [min(h + HUE_TOL, 179), 255, 255]
+    return [[int(n) for n in lo], [int(n) for n in hi]]
+
+
+def find_ring(view, scale, hsv_range):
+    """Inner edge of the tape loop. Returns (Nx2 polygon in view px or None, mask)."""
+    lo, hi = (np.array(b, dtype=np.uint8) for b in hsv_range)
+    mask = cv2.inRange(cv2.cvtColor(view, cv2.COLOR_BGR2HSV), lo, hi)
+
+    def kernel(cm):
+        n = max(int(cm * scale) | 1, 3)  # odd, at least 3 px
+        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (n, n))
+
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel(OPEN_CM))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel(CLOSE_CM))
+
+    # CCOMP: top level = outer edges of blue blobs, second level = their holes
+    contours, hier = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    holes = [c for c, h in zip(contours, hier[0]) if h[3] != -1] if contours else []
+    if not holes:
+        return None, mask
+    hole = max(holes, key=cv2.contourArea)
+    if cv2.contourArea(hole) < MIN_RING_CM2 * scale ** 2:
+        return None, mask
+    return cv2.approxPolyDP(hole, SIMPLIFY_CM * scale, True).reshape(-1, 2), mask
+
+
+def draw_survey(view, floor, ring_cm, origin, scale):
+    """Draw the floor tags (green) and ring (magenta) on the top-down view."""
+    def px(pts):
+        return ((np.asarray(pts) - origin) * scale).astype(int)
 
     for tag_id, c in floor.items():
-        px = ((c - [x0, y0]) * scale).astype(int)
-        cv2.polylines(view, [px], True, (0, 255, 0), 2)
-        cv2.circle(view, tuple(px[0]), 5, (0, 255, 0), -1)
-        cv2.putText(view, f"id {tag_id}", tuple(px.min(axis=0) - [0, 8]),
+        p = px(c)
+        cv2.polylines(view, [p], True, (0, 255, 0), 2)
+        cv2.circle(view, tuple(p[0]), 5, (0, 255, 0), -1)
+        cv2.putText(view, f"id {tag_id}", tuple(p.min(axis=0) - [0, 8]),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    if ring_cm is not None:
+        cv2.polylines(view, [px(ring_cm)], True, (255, 0, 255), 2)
+    msg = "ring found" if ring_cm is not None else "NO RING - click the tape"
+    cv2.putText(view, f"{msg}   click = sample   m = mask   s/r/q", (10, 25),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     return view
 
 
-def save(path, floor, cfg, frame_shape):
+def review(frame, H, floor, hsv_range):
+    """Show the top-down view until a key decides. Returns (key, ring_cm, hsv_range)."""
+    view, origin, scale = top_down(frame, H)
+    clicks = []
+    cv2.namedWindow("top-down")
+    cv2.setMouseCallback("top-down", lambda ev, x, y, *_:
+                         clicks.append((x, y)) if ev == cv2.EVENT_LBUTTONDOWN else None)
+    show_mask = False
+    ring_px, mask = find_ring(view, scale, hsv_range)
+    while True:
+        if clicks:
+            hsv_range = sample_hsv(view, clicks.pop())
+            print(f"ring_hsv: {hsv_range}")
+            ring_px, mask = find_ring(view, scale, hsv_range)
+        ring_cm = ring_px / scale + origin if ring_px is not None else None
+        base = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR) if show_mask else view.copy()
+        cv2.imshow("top-down", draw_survey(base, floor, ring_cm, origin, scale))
+        key = cv2.waitKey(30) & 0xFF
+        if key == ord("m"):
+            show_mask = not show_mask
+        elif key in (ord("s"), ord("r"), ord("q"), 27):
+            cv2.destroyWindow("top-down")
+            return key, ring_cm, hsv_range
+
+
+def save(path, floor, ring_cm, hsv_range, cfg, frame_shape):
     data = {
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
         "image_size": [frame_shape[1], frame_shape[0]],
@@ -108,6 +191,8 @@ def save(path, floor, cfg, frame_shape):
             str(i): {"size_cm": cfg["floor_tags"][i], "corners_cm": np.round(c, 3).tolist()}
             for i, c in sorted(floor.items())
         },
+        "ring_hsv": hsv_range,
+        "ring_cm": np.round(ring_cm, 2).tolist(),
     }
     path.write_text(json.dumps(data, indent=2))
     print(f"Saved {path}")
@@ -133,6 +218,7 @@ def main():
 
     cfg = yaml.safe_load(args.config.read_text())
     camera = args.camera if args.camera is not None else cfg["camera"]
+    hsv_range = cfg["ring_hsv"]
     detector = make_detector()
     cap = cv2.VideoCapture(camera)
     if not cap.isOpened():
@@ -166,12 +252,15 @@ def main():
             H, floor = survey(avg, cfg)
             check(floor, cfg)
             ok, frame = cap.read()
-            cv2.imshow("top-down", top_down(frame, H, floor))
-            print("s = save   r = redo   q = quit")
-            key = cv2.waitKey(0) & 0xFF
-            cv2.destroyWindow("top-down")
+            print("click the tape = resample color   m = mask   s = save   r = redo   q = quit")
+            key, ring_cm, hsv_range = review(frame, H, floor, hsv_range)
             if key == ord("s"):
-                save(args.out, floor, cfg, frame.shape)
+                if ring_cm is None:
+                    print("No ring found, not saved. Capture again and click the tape.")
+                    continue
+                print(f"Ring: {len(ring_cm)} points, "
+                      f"{cv2.contourArea(ring_cm.astype(np.float32)) / 1e4:.2f} m^2")
+                save(args.out, floor, ring_cm, hsv_range, cfg, frame.shape)
                 break
             if key in (ord("q"), 27):
                 break
