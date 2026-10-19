@@ -3,10 +3,17 @@ camera: 4              # /dev/video4 = DroidCam
 
 robot_tag_id: 20
 robot_tag_size_cm: 16.0
+our_radius_cm: 20.0    # OUR robot: opponent finder ignores this circle around our tag; err big
+
+opp_min_area_cm2: 150  # noise floor: smaller blobs never count as the opponent
 
 floor_tags:            # id: size_cm
   21: 16.0
   22: 16.0
   23: 16.0
   24: 16.0
-anchor_tag_id: 21      # floor tag nearest the image center
+anchor_tag_id: 21      # any floor tag; pick the one with the clearest view
+
+# Blue tape color, [low, high] in OpenCV HSV (hue 0-179). Starting guess only:
+# click the tape in calibrate.py to resample; the result goes in calibration.json.
+ring_hsv: [[100, 80, 50], [130, 255, 255]]
