@@ -16,8 +16,8 @@ laptop/            vision system (runs on the laptop)
   track.py         live tracker; publishes the state over MQTT
   opponent.py      opponent finder used by track.py
   geometry.py      shared detection and floor-geometry helpers
-python/main.py     UNO Q Linux side (currently: ultrasonic test)
-sketch/            UNO Q microcontroller (currently: HC-SR04 on D9/D10)
+python/main.py     UNO Q Linux side (currently: motor + sensor test)
+sketch/            UNO Q microcontroller: drive(), distance(), imu_read()
 docs/              screenshots
 ```
 
@@ -112,7 +112,7 @@ laptop: lego_bridge.py ◄──flip──────┘
 - **UNO Q Python** merges MQTT state with board sensors and ticks the behavior
   tree. The tree outputs `drive(l, r)` and an optional flip.
 - **UNO Q sketch** drives the two motors (from door-to-door), reads the
-  HC-SR04 (5V, Trig D9, Echo D10) and the accelerometer (from ping-pong), and
+  HC-SR04 (5V, Trig D7, Echo D8) and the accelerometer (from ping-pong), and
   stops the motors if no `drive` call arrives for 200 ms.
 
 ### Behavior tree
