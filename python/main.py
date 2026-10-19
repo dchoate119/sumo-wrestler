@@ -1,56 +1,82 @@
-"""UNO Q side: hardware test.
+"""UNO Q side: behavior tree driven by the laptop's state messages.
 
-Spins each motor forward on its own, then both, so wiring and direction can
-be checked (fix with INVERT_M1/M2 in the sketch). After that it just logs the
-ultrasonic and accelerometer readings. Lift the wheels off the ground first.
+Subscribes to the state topic from laptop/track.py, ticks the tree in bt.py at
+TICK_HZ, and sends the resulting drive command to the sketch. Space in track.py
+switches between idle and auto. The broker address and login come from the
+gitignored python/mqtt_secrets.py (BROKER, USER, PASSWORD).
 """
 
+import json
+import threading
 import time
 
+import paho.mqtt.client as mqtt
 from arduino.app_utils import App, Bridge, Logger
 
-TEST_SPEED = 100     # of 255
-TEST_S = 1.5         # per step
-READ_HZ = 5
+from bt import build_tree
+from mqtt_secrets import BROKER, PASSWORD, USER
 
-# (label, left, right)
-STEPS = [("left motor forward", TEST_SPEED, 0),
-         ("right motor forward", 0, TEST_SPEED),
-         ("both forward", TEST_SPEED, TEST_SPEED)]
+PORT = 1883
+TOPIC = "dchoate119/sumo/state"
+TICK_HZ = 20        # also feeds the sketch's 200 ms motor watchdog
+STALE_S = 0.3       # state older than this (by arrival time) is not fresh
 
 logger = Logger("sumo-wrestler")
 
-
-def motor_test():
-    for label, left, right in STEPS:
-        logger.info(f"motor test: {label}")
-        end = time.time() + TEST_S
-        while time.time() < end:
-            Bridge.call("drive", left, right)  # keep feeding the 200 ms watchdog
-            time.sleep(0.05)
-        Bridge.call("drive", 0, 0)
-        time.sleep(0.5)
-    logger.info("motor test done")
+latest = {}         # last decoded state message
+latest_rx = 0.0     # time.monotonic() when it arrived
+lock = threading.Lock()
 
 
-tested = False
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code.is_failure:
+        logger.warning(f"MQTT connect failed: {reason_code}")
+        return
+    logger.info(f"MQTT connected to {BROKER}, subscribing to {TOPIC}")
+    client.subscribe(TOPIC, qos=0)  # (re)subscribe on every reconnect
+
+
+def on_message(client, userdata, msg):
+    global latest, latest_rx
+    try:
+        data = json.loads(msg.payload)
+    except ValueError:
+        logger.warning(f"Bad payload: {msg.payload[:80]!r}")
+        return
+    with lock:
+        latest = data
+        latest_rx = time.monotonic()
+
+
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+client.username_pw_set(USER, PASSWORD)
+client.on_connect = on_connect
+client.on_message = on_message
+client.connect_async(BROKER, PORT)  # retries in the background if the network isn't up yet
+client.loop_start()
+
+tree = build_tree()
+last_behavior = None
 
 
 def loop():
-    global tested
-    if not tested:
-        logger.info(f"imu: {Bridge.call('imu_check')}")
-        motor_test()
-        tested = True
+    global last_behavior
+    with lock:
+        bb = dict(latest)
+        bb["fresh"] = time.monotonic() - latest_rx < STALE_S
+    tree.tick(bb)
 
-    cm = Bridge.call("distance")
-    imu = Bridge.call("imu_read")
-    dist = "no echo" if cm < 0 else f"{cm:6.1f} cm"
-    logger.info(f"distance: {dist} | imu (g, deg/s): {imu or 'not found'}")
-    time.sleep(1 / READ_HZ)
+    kind, *args = bb["cmd"]
+    if kind == "drive":
+        Bridge.call("drive", *(int(a) for a in args))
+    if bb["behavior"] != last_behavior:
+        logger.info(f"behavior: {bb['behavior']}")
+        last_behavior = bb["behavior"]
+    time.sleep(1 / TICK_HZ)
 
 
 try:
     App.run(user_loop=loop)
 finally:
     Bridge.call("drive", 0, 0)
+    client.loop_stop()
