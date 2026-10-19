@@ -4,6 +4,8 @@ Floor frame: the anchor tag's corner 0 is the origin, x runs along its top edge
 and y along its side edge, in cm. Same handedness as the image (y "down").
 """
 
+import math
+
 import cv2
 import numpy as np
 
@@ -33,3 +35,9 @@ def to_floor(H, pts):
     """Map Nx2 image points to floor cm through homography H (image -> floor)."""
     pts = np.asarray(pts, dtype=np.float64).reshape(-1, 1, 2)
     return cv2.perspectiveTransform(pts, H).reshape(-1, 2)
+
+
+def bearing(x, y, heading, tx, ty):
+    """Direction to (tx, ty) relative to heading, degrees in [-180, 180). 0 = dead ahead."""
+    a = math.degrees(math.atan2(ty - y, tx - x)) - heading
+    return (a + 180) % 360 - 180
