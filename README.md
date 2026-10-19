@@ -103,7 +103,7 @@ laptop: lego_bridge.py ◄──flip──────┘
 - **UNO Q Python** merges MQTT state with board sensors and ticks the behavior
   tree. The tree outputs `drive(l, r)` and an optional flip.
 - **UNO Q sketch** drives the two motors (from door-to-door), reads the
-  HC-SR04 (5V, Trig D7, Echo D8) and the accelerometer (from ping-pong), and
+  HC-SR04 (5V, Trig D9, Echo D10) and the accelerometer (from ping-pong), and
   stops the motors if no `drive` call arrives for 200 ms.
 
 ### Behavior tree

@@ -7,8 +7,8 @@
 //   imu_read()          "ax,ay,az,gx,gy,gz" in g and deg/s, "" if not found
 //
 // Wiring:
-//   Cytron Maker Drive  M1A D3, M1B D5, M2A D6, M2B D9 (all PWM)
-//   HC-SR04 (5V)        Trig D7, Echo D8
+//   Cytron Maker Drive  M1A D3, M1B D5, M2A D6, M2B D8 (all PWM)
+//   HC-SR04 (5V)        Trig D9, Echo D10
 //   MPU-6050            header SDA/SCL, address 0x68
 //
 // Maker Drive logic per motor: A=PWM,B=0 forward; A=0,B=PWM reverse; both 0 coast.
@@ -17,14 +17,14 @@
 #include "Arduino_RouterBridge.h"
 
 // ---------- motors ----------
-const int M1A = 3;
-const int M1B = 5;
-const int M2A = 6;
-const int M2B = 9;
+const int M1A = 11;
+const int M1B = 6;
+const int M2A = 3;
+const int M2B = 5;
 
 // Flip if a motor spins the wrong way for a positive speed
 const bool INVERT_M1 = false;
-const bool INVERT_M2 = false;
+const bool INVERT_M2 = true;
 
 const unsigned long WATCHDOG_MS = 200;
 
@@ -54,8 +54,8 @@ void drive(int left, int right) {
 }
 
 // ---------- ultrasonic ----------
-const int TRIG_PIN = 7;
-const int ECHO_PIN = 8;
+const int TRIG_PIN = 9;
+const int ECHO_PIN = 10;
 
 // ~2.5 m round trip; kept short because pulseIn blocks the loop thread
 const unsigned long ECHO_TIMEOUT_US = 15000;
