@@ -2,5 +2,9 @@
 .cache/
 __pycache__/
 
+# broker login (see README, Local broker)
+laptop/mosquitto_passwd
+mqtt_secrets.py
+
 # regenerate with laptop/make_tags.py
 laptop/tags.pdf

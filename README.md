@@ -47,17 +47,6 @@ python laptop/make_tags.py      # print tags.pdf at 100% scale
 python laptop/view_tags.py      # check the camera sees every tag
 ```
 
-### During Match
-
-1. Put the floor tags down, keeping them off the tape.
-2. `python laptop/calibrate.py`. Press `c` to capture and check that the
-   magenta line traces the tape's inner edge (click the tape to resample its
-   color if not), then press `s` to save. The ring may have robots in it.
-3. `python laptop/track.py --mqtt` (add `--broker localhost` for a local
-   broker). Keys: space starts/stops the robot (`auto`/`idle`, starts in
-   `idle`), `o` shows the opponent mask, `r` resets `out` between rounds, `q`
-   quits.
-
 ### Tracker view (synthetic test)
 
 | Approaching the edge | Pushed out |
@@ -167,3 +156,11 @@ robot stands still under teleop instead of returning to auto.
 **Tuning**
 - [ ] Measure flip time, set `FLIP_COOLDOWN_S`
 - [ ] Tune thresholds (`EDGE_CM`, `FLIP_CM`, `ATTACK_CM`, `ATTACK_DEG`) on the ring
+
+## During match
+
+1. Put the floor tags down (off the tape), then `python laptop/calibrate.py`:
+   `c` to capture, `s` to save.
+2. Terminal 1: `mosquitto -c laptop/mosquitto.conf -v`
+3. Terminal 2: `python laptop/track.py --mqtt --broker localhost`. Keys: space
+   start/stop, `r` reset `out`, `o` opponent mask, `q` quit.

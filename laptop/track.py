@@ -121,6 +121,11 @@ def connect_mqtt(host, port):
     import paho.mqtt.client as mqtt  # only needed with --mqtt
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sumo-laptop")
+    try:  # login for the local broker; the public one needs none
+        from mqtt_secrets import PASSWORD, USER
+        client.username_pw_set(USER, PASSWORD)
+    except ImportError:
+        pass
     client.connect(host, port)
     client.loop_start()
     print(f"MQTT: publishing to {host}:{port} topic '{TOPIC}'")
