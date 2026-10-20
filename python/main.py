@@ -3,7 +3,8 @@
 Subscribes to the state topic from laptop/track.py, ticks the tree in bt.py at
 TICK_HZ, and sends the resulting drive command to the sketch. Space in track.py
 switches between idle and auto. The running behavior goes back out on
-BEHAVIOR_TOPIC so track.py can show it. The broker address and login come from the
+BEHAVIOR_TOPIC so track.py can show it, and each flip goes out on FLIP_TOPIC for
+laptop/lego_bridge.py. The ultrasonic is read every tick. The broker address and login come from the
 gitignored python/mqtt_secrets.py (BROKER, USER, PASSWORD).
 """
 
@@ -20,8 +21,10 @@ from mqtt_secrets import BROKER, PASSWORD, USER
 PORT = 1883
 TOPIC = "dchoate119/sumo/state"
 BEHAVIOR_TOPIC = "dchoate119/sumo/behavior"  # running behavior, sent on change for track.py
+FLIP_TOPIC = "dchoate119/sumo/flip"          # one message per flip, for laptop/lego_bridge.py
 TICK_HZ = 20        # also feeds the sketch's 200 ms motor watchdog
 STALE_S = 0.3       # state older than this (by arrival time) is not fresh
+US_LOG_S = 0.5      # log the ultrasonic this often, to tune FLIP_CM
 
 logger = Logger("sumo-wrestler")
 
@@ -60,19 +63,31 @@ client.loop_start()
 tree = build_tree()
 last_behavior = None
 last_behavior_pub = 0.0
+last_flip = -1e9    # time.monotonic() of the last flip sent
+last_us_log = 0.0
 
 
 def loop():
-    global last_behavior, last_behavior_pub
+    global last_behavior, last_behavior_pub, last_flip, last_us_log
+    now = time.monotonic()
     with lock:
         bb = dict(latest)
-        bb["fresh"] = time.monotonic() - latest_rx < STALE_S
+        bb["fresh"] = now - latest_rx < STALE_S
+    bb["now"] = now
+    bb["last_flip"] = last_flip
+    bb["ultrasonic_cm"] = Bridge.call("distance")
     tree.tick(bb)
 
     kind, *args = bb["cmd"]
     if kind == "drive":
         Bridge.call("drive", *(int(a) for a in args))
-    now = time.monotonic()
+    if now - last_us_log >= US_LOG_S:
+        logger.info(f"ultrasonic: {bb['ultrasonic_cm']:.1f} cm ({bb['behavior']})")
+        last_us_log = now
+    if bb.get("flip"):
+        client.publish(FLIP_TOPIC, "flip", qos=0)
+        last_flip = now
+        logger.info(f"flip at {bb['ultrasonic_cm']:.1f} cm")
     if bb["behavior"] != last_behavior:
         logger.info(f"behavior: {bb['behavior']}")
     # on change, and every second in case an earlier one went out before MQTT connected

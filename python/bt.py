@@ -18,9 +18,11 @@ TURN_SPEED = 90       # pivot speed while pointing at the center
 ALIGN_DEG = 30        # pivot in place until the target is within this
 STEER_PER_DEG = 2     # while driving, wheel speed difference per degree off
 CHASE_SPEED = 100     # forward speed toward the opponent once pointed at it
-ATTACK_SPEED = 150    # full push
+ATTACK_SPEED = 255    # full push
 ATTACK_DEG = 15       # attack when the opponent is within this of our heading
 ATTACK_CM = 40        # ... and its center is closer than this to ours (touching is ~15-20)
+FLIP_CM = 18          # ultrasonic reading (from the sensor) that counts as contact; it reads ~15 at a push
+FLIP_COOLDOWN_S = 1.5 # one flip takes about 1 s; lego_bridge.py ignores flips mid-swing anyway
 # Bearings grow from +x toward +y, which looks clockwise from the camera, so a
 # positive bearing means turn right. Flip this if the robot turns away instead.
 TURN_SIGN = -1
@@ -104,6 +106,12 @@ def turn_and_drive(bearing, speed):
     return ("drive", speed + steer, speed - steer)
 
 
+def fire_flipper(bb):
+    """Ask main.py to send one flip, and keep pushing while the arm swings."""
+    bb["flip"] = True
+    return ("drive", ATTACK_SPEED, ATTACK_SPEED)
+
+
 def build_tree():
     # Conditions test seen before the pose fields, which are missing when it's false
     return Selector(
@@ -115,6 +123,11 @@ def build_tree():
                  Action("Idle", lambda bb: ("drive", 0, 0))),
         Sequence(EdgeNear(),
                  Action("Edge escape", lambda bb: turn_and_drive(bb["center_bearing"], ESCAPE_SPEED))),
+        # ultrasonic only, so it still works when vision drops out. -1 = no echo.
+        # main.py stamps last_flip when it sends one; fires for a single tick, then cools down
+        Sequence(Condition("contact", lambda bb: 0 <= bb.get("ultrasonic_cm", -1) < FLIP_CM),
+                 Condition("flipper ready", lambda bb: bb["now"] - bb.get("last_flip", -1e9) >= FLIP_COOLDOWN_S),
+                 Action("Flip", fire_flipper)),
         Sequence(Condition("opp in sight", lambda bb: bb.get("seen") and bb.get("opp_seen")),
                  Selector(
                      Sequence(Condition("lined up", lambda bb: abs(bb["opp_bearing"]) < ATTACK_DEG),

@@ -32,6 +32,15 @@ CASES = [
     ("opp seen, we aren't", [{**AUTO, "seen": False, "opp_seen": True}], ["Search"]),
     ("edge beats attack", [{**AUTO, "edge": NEAR, "edge_bearing": 0, "center_bearing": 180,
                             "opp_seen": True, "opp_dist": 25, "opp_bearing": 0}], ["Edge escape"]),
+    ("contact", [{**AUTO, **MID, "ultrasonic_cm": 5, "now": 10}], ["Flip"]),
+    ("contact, no vision", [{**AUTO, "seen": False, "ultrasonic_cm": 5, "now": 10}], ["Flip"]),
+    ("contact, cooling down", [{**AUTO, **MID, "ultrasonic_cm": 5, "now": 10, "last_flip": 9.5}], ["Search"]),
+    ("contact, cooled down", [{**AUTO, **MID, "ultrasonic_cm": 5, "now": 10, "last_flip": 8}], ["Flip"]),
+    ("too far to flip", [{**AUTO, **MID, "ultrasonic_cm": 30, "now": 10}], ["Search"]),
+    ("no echo", [{**AUTO, **MID, "ultrasonic_cm": -1, "now": 10}], ["Search"]),
+    ("contact but idle", [{"fresh": True, "mode": "idle", "ultrasonic_cm": 5, "now": 10}], ["Idle"]),
+    ("edge beats flip", [{**AUTO, "edge": NEAR, "edge_bearing": 0, "center_bearing": 180,
+                          "ultrasonic_cm": 5, "now": 10}], ["Edge escape"]),
     ("escape holds until clear", [
         {**AUTO, "edge": NEAR, "edge_bearing": 10, "center_bearing": -170},   # starts
         {**AUTO, "edge": NEAR, "edge_bearing": 170, "center_bearing": 10},    # turned away: holds
