@@ -2,8 +2,9 @@
 
 A LEGO sumo robot for a blue-tape ring. An overhead camera on a laptop tracks
 both robots and sends the match state over MQTT to the Arduino UNO Q, which
-reads its own sensors and runs a behavior tree. When the robot is pushed out,
-it stops and plays a sad song.
+reads its own sensors and runs a behavior tree. A LEGO motor flips the
+opponent on contact. When the robot is pushed out, it stops and the laptop
+plays a sad song.
 
 ## Layout
 
@@ -16,7 +17,11 @@ laptop/            vision system (runs on the laptop)
   track.py         live tracker; publishes the state over MQTT
   opponent.py      opponent finder used by track.py
   geometry.py      shared detection and floor-geometry helpers
-python/main.py     UNO Q Linux side (currently: motor + sensor test)
+  lego_bridge.py   MQTT flip -> LEGO double motor over BLE
+  sad_song.py      played by track.py when we're pushed out
+  mosquitto.conf   local MQTT broker
+python/main.py     UNO Q Linux side: MQTT in, ticks the tree, drive/flip out
+python/bt.py       behavior tree (test_bt.py: scenario tests)
 sketch/            UNO Q microcontroller: drive(), distance(), imu_read()
 docs/              screenshots
 ```
@@ -33,11 +38,14 @@ and y along its side edge.
 - **Our robot** has tag 20 on top, which gives its position and heading.
 - **The ring** is found once, at calibration: blue pixels in a top-down view
   are cleaned up into the tape loop, and the hole inside it is the ring's inner
-  edge, saved as a polygon.
+  edge, saved as a polygon. The color range starts from `ring_hsv` in
+  `config.yaml`; clicking the tape resamples it. Our tape is a dull blue, so
+  the config range is wide (`[[95, 20, 20], [125, 255, 255]]`).
 - **The opponent** needs no tag. Inside the ring, the rug color is fit as a
   smooth gradient (robots are dropped from the fit as outliers). Anything far
   from it, minus floor tags and a circle around our robot, is an object, and
-  the biggest blob is the opponent.
+  the biggest blob is the opponent. Known issue: a dark spot on the floor can
+  win over the opponent.
 
 ### Setup
 
@@ -59,7 +67,8 @@ red cross = opponent.
 ### MQTT state
 
 `track.py --mqtt` publishes one JSON message per frame (about 30 Hz) to
-`dchoate119/sumo/state` on `test.mosquitto.org`:
+`dchoate119/sumo/state` (default broker `test.mosquitto.org`; we use
+`--broker localhost`):
 
 ```json
 {"t": 1729361234.52, "mode": "auto", "seen": true, "held": false,
@@ -112,14 +121,20 @@ laptop: lego_bridge.py ◄──flip──────┘
 
 ![tree](docs/tree_layout.png)
 
-A selector: each tick, the first behavior whose conditions all pass runs.
-Safety (Lost, Idle, Teleop, Edge escape) outranks offense. State older than
-0.3 s (by arrival time) is stale.
+A selector ticked at 20 Hz: the first behavior whose conditions all pass runs.
+State older than 0.3 s (by arrival time) is stale and counts as idle. In
+priority order:
 
-- **Idle** = `mode` is `idle` (set by keys in `track.py`).
-- **Teleop active** = a `teleop` message arrived in the last 0.5 s. Teleop
-  overrides auto whenever the operator is touching the controls; letting go
-  hands control back to auto.
+1. **Lost**: `out` is true. Stop.
+2. **Idle**: `mode` isn't `auto`, or state is stale. Stop.
+3. **Edge escape**: within `EDGE_CM` of the edge and facing it. Turn and drive
+   toward the center until `EDGE_CLEAR_CM` in.
+4. **Flip**: ultrasonic under `FLIP_CM` and cooldown passed. Publish `flip`.
+5. **Attack**: opponent within `ATTACK_DEG` and `ATTACK_CM`. Drive at it fast.
+6. **Chase**: opponent seen. Turn and drive toward it.
+7. **Search**: spin in place.
+
+Teleop (overrides auto while controls are touched) is planned, not built.
 
 ### MQTT topics
 
@@ -128,8 +143,9 @@ All under `dchoate119/sumo/` on a local broker on the laptop.
 | topic | from → to | content |
 |---|---|---|
 | `state` | laptop → UNO Q | see above, ~30 Hz |
-| `teleop` | laptop → UNO Q | `{"l", "r", "flip"}`, ~20 Hz, only while controls are touched |
+| `behavior` | UNO Q → laptop | running behavior name, retained, shown in `track.py` |
 | `flip` | UNO Q → laptop | one message per flip, never repeated |
+| `teleop` | laptop → UNO Q | planned: `{"l", "r", "flip"}`, ~20 Hz, only while controls are touched |
 
 The teleop **hold** button publishes `{"l": 0, "r": 0}` while pressed, so the
 robot stands still under teleop instead of returning to auto.
@@ -137,32 +153,37 @@ robot stands still under teleop instead of returning to auto.
 ## To do
 
 **Laptop**
-- [ ] Run mosquitto locally; point `track.py` and the UNO Q at it
-- [ ] `lego_bridge.py`: connect to the double motor, run flips off the MQTT
+- [x] Run mosquitto locally; point `track.py` and the UNO Q at it
+- [x] `lego_bridge.py`: connect to the double motor, run flips off the MQTT
       thread, ignore flips while one is running
 - [x] `track.py`: keys to set `mode` (`idle` / `auto`), sent in every state message
+- [x] Sad song on `out`
+- [x] Calibrate the ring with the dull blue tape 
 - [ ] Teleop publisher (keyboard or gamepad): publish only while controls are
       touched, plus a hold button that publishes zeros
 
 **UNO Q sketch**
-- [ ] `drive(l, r)` for both motors, with the 200 ms watchdog
-- [ ] Accelerometer read exposed over the Bridge
-- [ ] Sad song
+- [x] `drive(l, r)` for both motors, with the 200 ms watchdog
+- [x] Ultrasonic and accelerometer reads exposed over the Bridge
 
 **UNO Q Python**
-- [ ] MQTT subscriber that fills the blackboard and stamps arrival time
-- [ ] Behavior tree (8 behaviors above), outputting `drive` + `flip`
+- [x] MQTT subscriber that fills the blackboard and stamps arrival time
+- [x] Behavior tree (7 behaviors above), outputting `drive` + `flip`
+- [x] `try/finally` around `App.run()` that sends `drive(0, 0)`
 - [ ] Teleop pass-through with edge guard; active while teleop is < 0.5 s old
-- [ ] `try/finally` around `App.run()` that sends `drive(0, 0)`
 
 **Tuning**
-- [ ] Measure flip time, set `FLIP_COOLDOWN_S`
-- [ ] Tune thresholds (`EDGE_CM`, `FLIP_CM`, `ATTACK_CM`, `ATTACK_DEG`) on the ring
+- [x] Measure flip time (~1 s), set `FLIP_COOLDOWN_S` (1.5 s)
+- [x] Tune thresholds (`EDGE_CM`, `FLIP_CM`, `ATTACK_CM`, `ATTACK_DEG`) on the ring
 
 ## During match
 
 1. Put the floor tags down (off the tape), then `python laptop/calibrate.py`:
-   `c` to capture, `s` to save.
-2. Terminal 1: `mosquitto -c laptop/mosquitto.conf -v`
-3. Terminal 2: `python laptop/track.py --mqtt --broker localhost`. Keys: space
+   `c` to capture, `m` to check the tape mask, `s` to save.
+2. Start the board app: `python3 tools/deploy.py sumo-wrestler` (from the
+   workspace root). Check `app list` shows it running, not another app.
+3. Terminal 1: `mosquitto -c laptop/mosquitto.conf -v`
+4. Terminal 2: rest the flipper arm down, then `python laptop/lego_bridge.py`
+   (`--test` flips on Enter, no MQTT).
+5. Terminal 3: `python laptop/track.py --mqtt --broker localhost`. Keys: space
    start/stop, `r` reset `out`, `o` opponent mask, `q` quit.

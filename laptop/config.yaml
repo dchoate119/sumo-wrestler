@@ -18,4 +18,4 @@ anchor_tag_id: 21      # any floor tag; pick the one with the clearest view
 
 # Blue tape color, [low, high] in OpenCV HSV (hue 0-179). Starting guess only:
 # click the tape in calibrate.py to resample; the result goes in calibration.json.
-ring_hsv: [[100, 80, 50], [130, 255, 255]]
+ring_hsv: [[95, 20, 20], [125, 255, 255]]
