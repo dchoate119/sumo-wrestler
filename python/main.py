@@ -20,16 +20,20 @@ from mqtt_secrets import BROKER, PASSWORD, USER
 
 PORT = 1883
 TOPIC = "dchoate119/sumo/state"
+TELEOP_TOPIC = "dchoate119/sumo/teleop"      # {"l", "r", "flip"} from laptop/teleop.py, only while keys are held
 BEHAVIOR_TOPIC = "dchoate119/sumo/behavior"  # running behavior, sent on change for track.py
 FLIP_TOPIC = "dchoate119/sumo/flip"          # one message per flip, for laptop/lego_bridge.py
 TICK_HZ = 20        # also feeds the sketch's 200 ms motor watchdog
 STALE_S = 0.3       # state older than this (by arrival time) is not fresh
+TELEOP_S = 0.5      # teleop is active while its last message is younger than this
 US_LOG_S = 0.5      # log the ultrasonic this often, to tune FLIP_CM
 
 logger = Logger("sumo-wrestler")
 
 latest = {}         # last decoded state message
 latest_rx = 0.0     # time.monotonic() when it arrived
+teleop = {}         # last decoded teleop message
+teleop_rx = -1e9    # time.monotonic() when it arrived
 lock = threading.Lock()
 
 
@@ -37,20 +41,22 @@ def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code.is_failure:
         logger.warning(f"MQTT connect failed: {reason_code}")
         return
-    logger.info(f"MQTT connected to {BROKER}, subscribing to {TOPIC}")
-    client.subscribe(TOPIC, qos=0)  # (re)subscribe on every reconnect
+    logger.info(f"MQTT connected to {BROKER}, subscribing to {TOPIC} and {TELEOP_TOPIC}")
+    client.subscribe([(TOPIC, 0), (TELEOP_TOPIC, 0)])  # (re)subscribe on every reconnect
 
 
 def on_message(client, userdata, msg):
-    global latest, latest_rx
+    global latest, latest_rx, teleop, teleop_rx
     try:
         data = json.loads(msg.payload)
     except ValueError:
         logger.warning(f"Bad payload: {msg.payload[:80]!r}")
         return
     with lock:
-        latest = data
-        latest_rx = time.monotonic()
+        if msg.topic == TELEOP_TOPIC:
+            teleop, teleop_rx = data, time.monotonic()
+        else:
+            latest, latest_rx = data, time.monotonic()
 
 
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -73,6 +79,8 @@ def loop():
     with lock:
         bb = dict(latest)
         bb["fresh"] = now - latest_rx < STALE_S
+        if now - teleop_rx < TELEOP_S:
+            bb["teleop"] = dict(teleop)
     bb["now"] = now
     bb["last_flip"] = last_flip
     bb["ultrasonic_cm"] = Bridge.call("distance")
