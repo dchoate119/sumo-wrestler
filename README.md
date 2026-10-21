@@ -18,6 +18,7 @@ laptop/            vision system (runs on the laptop)
   opponent.py      opponent finder used by track.py
   geometry.py      shared detection and floor-geometry helpers
   lego_bridge.py   MQTT flip -> LEGO double motor over BLE
+  teleop.py        keyboard teleop window; publishes teleop over MQTT
   sad_song.py      played by track.py when we're pushed out
   mosquitto.conf   local MQTT broker
 python/main.py     UNO Q Linux side: MQTT in, ticks the tree, drive/flip out
@@ -127,14 +128,15 @@ priority order:
 
 1. **Lost**: `out` is true. Stop.
 2. **Idle**: `mode` isn't `auto`, or state is stale. Stop.
-3. **Edge escape**: within `EDGE_CM` of the edge and facing it. Turn and drive
+3. **Teleop**: a teleop message arrived under 0.5 s ago. Drive the operator's
+   `l, r`, minus any forward motion toward the edge when within `EDGE_CM`
+   (edge guard). `flip` uses the flip cooldown.
+4. **Edge escape**: within `EDGE_CM` of the edge and facing it. Turn and drive
    toward the center until `EDGE_CLEAR_CM` in.
-4. **Flip**: ultrasonic under `FLIP_CM` and cooldown passed. Publish `flip`.
-5. **Attack**: opponent within `ATTACK_DEG` and `ATTACK_CM`. Drive at it fast.
-6. **Chase**: opponent seen. Turn and drive toward it.
-7. **Search**: spin in place.
-
-Teleop (overrides auto while controls are touched) is planned, not built.
+5. **Flip**: ultrasonic under `FLIP_CM` and cooldown passed. Publish `flip`.
+6. **Attack**: opponent within `ATTACK_DEG` and `ATTACK_CM`. Drive at it fast.
+7. **Chase**: opponent seen. Turn and drive toward it.
+8. **Search**: spin in place.
 
 ### MQTT topics
 
@@ -145,7 +147,7 @@ All under `dchoate119/sumo/` on a local broker on the laptop.
 | `state` | laptop → UNO Q | see above, ~30 Hz |
 | `behavior` | UNO Q → laptop | running behavior name, retained, shown in `track.py` |
 | `flip` | UNO Q → laptop | one message per flip, never repeated |
-| `teleop` | laptop → UNO Q | planned: `{"l", "r", "flip"}`, ~20 Hz, only while controls are touched |
+| `teleop` | laptop → UNO Q | `{"l", "r", "flip"}`, 20 Hz, only while keys are held |
 
 The teleop **hold** button publishes `{"l": 0, "r": 0}` while pressed, so the
 robot stands still under teleop instead of returning to auto.
@@ -159,8 +161,8 @@ robot stands still under teleop instead of returning to auto.
 - [x] `track.py`: keys to set `mode` (`idle` / `auto`), sent in every state message
 - [x] Sad song on `out`
 - [x] Calibrate the ring with the dull blue tape 
-- [ ] Teleop publisher (keyboard or gamepad): publish only while controls are
-      touched, plus a hold button that publishes zeros
+- [x] Teleop publisher (keyboard): publish only while keys are held, plus a
+      hold button that publishes zeros
 
 **UNO Q sketch**
 - [x] `drive(l, r)` for both motors, with the 200 ms watchdog
@@ -170,7 +172,7 @@ robot stands still under teleop instead of returning to auto.
 - [x] MQTT subscriber that fills the blackboard and stamps arrival time
 - [x] Behavior tree (7 behaviors above), outputting `drive` + `flip`
 - [x] `try/finally` around `App.run()` that sends `drive(0, 0)`
-- [ ] Teleop pass-through with edge guard; active while teleop is < 0.5 s old
+- [x] Teleop pass-through with edge guard; active while teleop is < 0.5 s old
 
 **Tuning**
 - [x] Measure flip time (~1 s), set `FLIP_COOLDOWN_S` (1.5 s)
@@ -187,3 +189,5 @@ robot stands still under teleop instead of returning to auto.
    (`--test` flips on Enter, no MQTT).
 5. Terminal 3: `python laptop/track.py --mqtt --broker localhost`. Keys: space
    start/stop, `r` reset `out`, `o` opponent mask, `q` quit.
+6. Optional, terminal 4: `python laptop/teleop.py`. Teleop only drives while
+   `track.py` is in auto. WASD drive, Shift fast, Space hold, F flip.

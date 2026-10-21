@@ -7,6 +7,8 @@ bb["behavior"], and main.py sends the command. That keeps the tree runnable off
 the board (see test_bt.py).
 """
 
+import math
+
 SUCCESS, FAILURE, RUNNING = "success", "failure", "running"
 
 SEARCH_SPEED = 80     # of 255, each wheel opposite: spin in place
@@ -106,6 +108,25 @@ def turn_and_drive(bearing, speed):
     return ("drive", speed + steer, speed - steer)
 
 
+def teleop_drive(bb):
+    """Pass the operator's (l, r) through, minus any forward motion toward the edge.
+
+    The edge guard is the shared-control part: near the edge, driving toward it
+    (forward with the edge ahead, or back with it behind) loses its forward
+    component, so turning and backing away still work. A flip request uses the
+    same cooldown as the Flip behavior.
+    """
+    t = bb["teleop"]
+    l, r = t.get("l", 0), t.get("r", 0)
+    fwd = (l + r) / 2
+    if (bb.get("seen") and bb["edge"] < EDGE_CM
+            and fwd * math.cos(math.radians(bb["edge_bearing"])) > 0):
+        l, r = l - fwd, r - fwd
+    if t.get("flip") and bb["now"] - bb.get("last_flip", -1e9) >= FLIP_COOLDOWN_S:
+        bb["flip"] = True
+    return ("drive", l, r)
+
+
 def fire_flipper(bb):
     """Ask main.py to send one flip, and keep pushing while the arm swings."""
     bb["flip"] = True
@@ -121,6 +142,9 @@ def build_tree():
         # stale counts as idle, so the robot stops if the laptop goes quiet
         Sequence(Condition("not auto", lambda bb: bb.get("mode") != "auto" or not bb["fresh"]),
                  Action("Idle", lambda bb: ("drive", 0, 0))),
+        # main.py only sets teleop while its last message is < 0.5 s old
+        Sequence(Condition("teleop", lambda bb: "teleop" in bb),
+                 Action("Teleop", teleop_drive)),
         Sequence(EdgeNear(),
                  Action("Edge escape", lambda bb: turn_and_drive(bb["center_bearing"], ESCAPE_SPEED))),
         # ultrasonic only, so it still works when vision drops out. -1 = no echo.
